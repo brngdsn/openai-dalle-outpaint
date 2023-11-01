@@ -1,0 +1,21 @@
+{
+  "devDependencies": {
+    "nodemon": "^2.0.20"
+  },
+  "dependencies": {
+    "axios": "^1.2.2",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "http-proxy-middleware": "^2.0.6",
+    "openai": "^3.1.0"
+  },
+  "name": "eg-outpaint",
+  "version": "0.2.0",
+  "main": "src/index.js",
+  "author": "brn <brn.gdsn@gmail.com>",
+  "license": "MIT",
+  "scripts": {
+    "dev": "nodemon --watch 'src/**/*' -e js --exec \"clear && yarn start\"",
+    "start": "node ."
+  }
+}

@@ -1,0 +1,461 @@
+<html><head>
+  <style>
+    canvas {
+      border: 1px solid rgb(0, 119, 255);
+    }
+    .container {
+      background-image:
+        linear-gradient(45deg, #303030 25%, transparent 25%),
+        linear-gradient(-45deg, #303030 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #303030 75%),
+        linear-gradient(-45deg, transparent 75%, #303030 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+      position: absolute;
+      top: 40%;
+      left: 33%;
+      transform: translate(-50%, -50%);
+      margin-top: 100px;
+    }
+    .container-copy {
+      background-image: linear-gradient(45deg, #303030 25%, transparent 25%), linear-gradient(-45deg, #303030 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #303030 75%), linear-gradient(-45deg, transparent 75%, #303030 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+      position: absolute;
+      top: 51%;
+      left: 75%;
+      transform: translate(-50%, -50%);
+    }
+    .toolbar {
+      display: flex;
+      /* justify-content: space-between;
+      align-items: center; */
+      background-color: #101010;
+      color: white;
+      padding: 0.5em;
+    }
+    .toolbar button, input[type=file] {
+      background-color: transparent;
+      border: none;
+      color: white;
+      cursor: pointer;
+      font-size: 1em;
+      padding: 0.5em;
+      text-transform: uppercase;
+      border: 1px solid white;
+      border-radius: 3px;
+      margin-left: 10px;
+    }
+    .toolbar button:hover {
+      background-color: rgba(255, 255, 255, 0.1);
+    }
+    #toast-container {
+      position: fixed;
+      bottom: 35px;
+      right: 20px;
+      padding: 20px;
+      z-index: 1000;
+    }
+    .toast {
+      padding: 20px;
+      margin-top: 15px;
+      background-color: black;
+      color: white;
+      border-radius: 4px;
+      font-size: 14px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+      border: 1px solid aqua;
+    }
+    .toast.error {
+      border: 1px solid red;
+    }
+    #prompt, #api_key {
+      width: 600px;
+      background-color: #000000;
+      color: white;
+      padding: 2px;
+      font-family: verdana;
+      font-size: 24px;
+      border-style: solid;
+      border: 1px solid #ffffff;
+      border-radius: 5px;
+      padding-left: 10px;
+      padding-right: 10px;
+    }
+    #api_key {
+      display: block;
+    }
+    .outpaint-selector::after {
+      content: '';
+      color: white;
+    }
+    .upload {
+      background-color: red;
+      color: white;
+      padding: 5px 10px;
+      border: none;
+    }
+  </style>
+</head><body style="background-color: #101010;">
+
+  <div class="toolbar">
+    <input type="text" id="api_key" placeholder="openai dalle api key" value=""/>
+  </div>
+  <div class="toolbar">
+    <input type="text" id="prompt" placeholder="dalle prompt to generate your image (e.g., a cat)" value=""/>
+    <button onclick="handle_outpaint()" id="outpaint">Outpaint</button>
+    <button onclick="handle_download()" id="download">Download</button>
+    
+    <input type="file" id="upload" style="display:none;" />
+    <button onclick="handle_upload()" class="upload" style="border:1px solid orange;color:orange;">Upload</button>
+
+    <button onclick="handle_clear_canvas()" id="clear" style="border:1px solid red;color:red;">Clear</button>
+  </div>
+  <div class="container">
+    <canvas id="canvas" width="512" height="768" style="background-color: transparent;" crossorigin="null"></canvas>
+  </div>
+  <div class="container-copy">
+    <canvas id="temp-canvas" width="256" height="256" style="background-color: transparent;" crossorigin="null"></canvas>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.2.2/axios.min.js"></script>
+
+  <script>
+
+    class RESTfulAPIClient {
+      constructor({hostname, authScheme}) {
+        this.hostname = hostname;
+        this.authScheme = authScheme;
+      }
+
+      get(path) {
+        return axios.get(`${this.hostname}${path}`, {
+          headers: {
+            Authorization: this.authScheme
+          }
+        });
+      }
+
+      put(path, data) {
+        return axios.put(`${this.hostname}${path}`, data, {
+          headers: {
+            Authorization: this.authScheme
+          }
+        });
+      }
+
+      post(path, data, additional_headers = {}) {
+        return axios.post(`${this.hostname}${path}`, data, {
+          headers: {
+            Authorization: this.authScheme,
+            ...additional_headers
+          }
+        });
+      }
+
+      delete(path) {
+        return axios.delete(`${this.hostname}${path}`, {
+          headers: {
+            Authorization: this.authScheme
+          }
+        });
+      }
+    }
+
+    let outpaint_handler = null
+    let outpaint_mousemove_handler = null
+
+    document.querySelector('#outpaint')
+      .addEventListener('mouseenter', () => toast('Use this to select an area to outpaint.'));
+    
+    function handle_upload () {
+      const fileInput = document.querySelector('#upload');
+      fileInput.click()
+      fileInput.addEventListener("change", () => {
+        const main_canvas = document.querySelector('#canvas');
+        return displayImageOnCanvas(fileInput, canvas)
+      })
+    }
+
+    function handle_download () {
+      const main_canvas = document.querySelector('#canvas');
+      return downloadCanvas(main_canvas)
+    }
+
+    function handle_clear_canvas () {
+      const canvas = document.querySelector('#canvas');
+      const ctx = canvas.getContext('2d');
+      return clear_canvas(canvas, ctx)
+    }
+
+    function handle_outpaint () {
+      const main_canvas = document.querySelector('#canvas');
+      const main_ctx = main_canvas.getContext('2d');
+      const temp_canvas = document.querySelector('#temp-canvas');
+      const temp_ctx = main_canvas.getContext('2d');
+      followMouse_outpaint(main_canvas, temp_canvas)
+      console.log('Button 1 clicked');
+    }
+    
+    function create_selector_box () {
+      const top = document.createElement('div');
+      top.className = 'outpaint-selector'
+      top.style.position = 'fixed';
+      top.style.width = '256px';
+      top.style.height = '0px';
+      top.style.borderTop = '1px dashed white';
+
+      const right = document.createElement('div');
+      right.className = 'outpaint-selector'
+      right.style.position = 'fixed';
+      right.style.width = '0px';
+      right.style.height = '256px';
+      right.style.borderRight = '1px dashed white';
+
+      const bottom = document.createElement('div');
+      bottom.className = 'outpaint-selector'
+      bottom.style.position = 'fixed';
+      bottom.style.width = '256px';
+      bottom.style.height = '0px';
+      bottom.style.borderBottom = '1px dashed white';
+
+      const left = document.createElement('div');
+      left.className = 'outpaint-selector'
+      left.style.position = 'fixed';
+      left.style.width = '0px';
+      left.style.height = '256px';
+      left.style.borderLeft = '1px dashed white';
+
+      // add the divs to the body of the page
+      document.body.appendChild(top);
+      document.body.appendChild(right);
+      document.body.appendChild(bottom);
+      document.body.appendChild(left);
+
+      return [top, right, bottom, left]
+    }
+
+    function destroy_selector_box (top, right, bottom, left) {
+      // add the divs to the body of the page
+      document.body.removeChild(top);
+      document.body.removeChild(right);
+      document.body.removeChild(bottom);
+      document.body.removeChild(left);
+    }
+
+    function on_outpaint_image (main_canvas, temp_canvas, top, right, bottom, left) {
+      return async (event) => {
+        canvas.removeEventListener('mousemove', outpaint_mousemove_handler)
+        canvas.removeEventListener('click', outpaint_handler)
+        const container = document.querySelector('.container');
+        // copy the contents of the square from main_canvas into the temp_canvas
+        copySquare(container, main_canvas, top, right, bottom, left);
+        toast(`Copied ${256 * 256 * 4} bytes!`)
+        const prompt = document.querySelector('#prompt').value
+        toast(`Using "${prompt}"!`)
+        const mask_prime_data_url = temp_canvas.toDataURL('image/png', 1)
+        const mask_prime_response = await fetch(mask_prime_data_url)
+        const mask_prime_blob = await mask_prime_response.blob()
+        const mask_prime = new Blob([mask_prime_blob], { type: 'image/png' })
+        
+        try {
+          const outpaint_response = await onSubmitOutpaint(prompt, mask_prime, mask_prime)
+          const [{ url }] = outpaint_response
+
+          const generated_image = new Image()
+          // generated_image.src = url.split('https://').join('').split('oaidalleapiprodscus.blob.core.windows.net').join('/proxy')
+          generated_image.src = `/proxy/${encodeURIComponent(btoa(url))}`
+          generated_image.onload = () => {
+            pasteSquare(temp_canvas, generated_image, 0, 0);
+            // paste the contents of the buffer onto the canvas
+            pasteSquare(main_canvas, generated_image, event.offsetX - (256/2), event.offsetY - (256/2));
+            toast(`Pasted ${256 * 256 * 4} bytes!`)
+            destroy_selector_box(top, right, bottom, left)
+          }
+        } catch (error) {
+          console.log({ error })
+          destroy_selector_box(top, right, bottom, left)
+          toast(`Error: ${error.toString()}`, `error`)
+        }
+
+      }
+    }
+
+    function on_mousemove_outpaint_image (top, right, bottom, left) {
+      return (event) => {
+        top.nextElementSibling.innerHTML = `&nbsp;${event.clientY - 128}/${event.clientX - 128}`
+        top.nextElementSibling.style.color = 'white';
+        top.nextElementSibling.style.font = 'monospace';
+        top.nextElementSibling.style.fontSize = '12px';
+        top.style.top = `${event.clientY - 128}px`;
+        top.style.left = `${event.clientX - 128}px`;
+        right.style.top = `${event.clientY - 128}px`;
+        right.style.left = `${event.clientX + 128}px`;
+        bottom.style.top = `${event.clientY + 128}px`;
+        bottom.style.left = `${event.clientX - 128}px`;
+        left.style.top = `${event.clientY - 128}px`;
+        left.style.left = `${event.clientX - 128}px`;
+      }
+    }
+
+    function followMouse_outpaint(main_canvas, temp_canvas) {
+      // create the divs that will form the edges of the square
+      const [top, right, bottom, left] = create_selector_box()
+
+      // add an event listener to follow the mouse
+      outpaint_mousemove_handler = on_mousemove_outpaint_image(top, right, bottom, left)
+      canvas.addEventListener('mousemove', outpaint_mousemove_handler);
+
+      // add an event listener to handle clicks on the canvas
+      outpaint_handler = on_outpaint_image(main_canvas, temp_canvas, top, right, bottom, left)
+      canvas.addEventListener('click', outpaint_handler);
+    }
+
+    function clear_canvas (canvas, ctx) {
+      // set the globalAlpha property to 0
+      ctx.globalAlpha = 0;
+
+      // clear the canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // reset the globalAlpha property to 1
+      ctx.globalAlpha = 1;
+    }
+
+    function copySquare(container, main_canvas, top, right, bottom, left) {
+      // get the position of the top-left corner of the square relative to the canvas
+      const topRect = top.getBoundingClientRect();
+      const leftRect = left.getBoundingClientRect();
+      const x = topRect.left - main_canvas.offsetLeft - container.offsetLeft + 256;
+      const y = leftRect.top - main_canvas.offsetTop - container.offsetTop + 256 + 128;
+
+      console.log(topRect.left, main_canvas.offsetLeft, container.offsetLeft + 256, container.offsetLeft)
+      console.log(leftRect.top, main_canvas.offsetTop, container.offsetTop + 256, container.offsetTop)
+      console.log(x, y)
+
+      // use an off-screen canvas to copy the square into
+      const temp_canvas = document.querySelector('#temp-canvas');
+      const temp_ctx = temp_canvas.getContext('2d');
+
+      clear_canvas(temp_canvas, temp_ctx)
+
+      // copy the contents of the square from main_canvas into the temp_canvas using temp_ctx
+      temp_ctx.drawImage(main_canvas, x, y, 256, 256, 0, 0, 256, 256);
+    }
+
+    function pasteSquare(canvas, image, x, y) {
+      // get the canvas context
+      const context = canvas.getContext('2d');
+
+      // draw the image onto the canvas
+      context.drawImage(image, x, y);
+    }
+
+    function toast(message, type = `primary`) {
+      // Create or get toast container
+      let toastContainer = document.querySelector('#toast-container')
+      
+      if (!toastContainer) {
+        toastContainer = document.createElement('div')
+        toastContainer.setAttribute('id', 'toast-container')
+        document.body.appendChild(toastContainer)
+      }
+
+      // Create the toast element
+      const toast = document.createElement('div');
+      toast.classList.add('toast');
+      toast.classList.add(type);
+      toast.textContent = message;
+
+      // Add the toast to the page
+      toastContainer.appendChild(toast);
+
+      // Set the toast to disappear after 5 seconds
+      setTimeout(() => {
+        // Remove the toast from the page
+        toastContainer.removeChild(toast);
+      }, 15000);
+    }
+
+    async function onSubmitOutpaint (prompt, maskPrime, mask) {
+      // try {
+        const n = 1
+        const size = `256x256`
+        const data = new FormData()
+        data.append('image', maskPrime)
+        data.append('mask', mask)
+        data.append('prompt', prompt)
+        data.append('n', n)
+        data.append('size', size)
+        const headers = {
+          'Content-Type': 'multipart/form-data'
+        }
+        const openAiApiKey = document.querySelector('#api_key').value
+        const openaiApiClient = new RESTfulAPIClient({
+          hostname: 'https://api.openai.com/',
+          authScheme: `Bearer ${openAiApiKey}`,
+        })
+        const response = await openaiApiClient.post(`/v1/images/edits`, data, headers)
+        return response.data.data
+      // } catch (error) {
+      //   console.log({ error })
+      // }
+    }
+
+    function downloadCanvas(canvas) {
+      // create a link element
+      const link = document.createElement("a");
+
+      // set the link's href to the canvas's image data URL
+      link.href = canvas.toDataURL();
+
+      // set the link's download attribute to the desired file name
+      link.download = `outpaint-${new Date().getTime()}.png`;
+
+      // append the link to the document and click it to trigger the download
+      document.body.appendChild(link);
+      link.click();
+
+      // remove the link from the document
+      document.body.removeChild(link);
+    }
+
+    async function displayImageOnCanvas(fileInput, canvas) {
+      // get a reference to the file selected by the file input
+      const file = fileInput.files[0];
+
+      // create a FileReader object
+      const reader = new FileReader();
+
+      // create an image element
+      const img = document.createElement("img");
+
+      // set the onload event handler
+      reader.onload = function(event) {
+        // get the image data URL
+        const dataURL = event.target.result;
+
+        // set the image's src to the data URL
+        img.src = dataURL;
+      };
+
+      // read the file as a data URL
+      reader.readAsDataURL(file);
+
+      // wait for the image to load
+      await new Promise((resolve) => {
+        img.onload = resolve;
+      });
+
+      // draw the image on the canvas, centered both horizontally and vertically
+      const ctx = canvas.getContext("2d");
+      const imgWidth = img.width;
+      const imgHeight = img.height;
+      const canvasWidth = canvas.width;
+      const canvasHeight = canvas.height;
+      ctx.drawImage(img, (canvasWidth - imgWidth) / 2, (canvasHeight - imgHeight) / 2);
+    }
+
+  </script>
+
+</body></html>
